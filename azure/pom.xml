@@ -211,6 +211,10 @@
       <artifactId>slf4j-simple</artifactId>
       <scope>test</scope>
     </dependency>
+      <dependency>
+          <groupId></groupId>
+          <artifactId></artifactId>
+      </dependency>
   </dependencies>
   <profiles>
     <profile>
