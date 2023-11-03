@@ -1,0 +1,50 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.1",
+  "parameters": {
+    "location": {
+      "type": "String"
+    },
+    "networkInterfaceName": {
+      "type": "String"
+    },
+    "subnetId": {
+      "type": "String"
+    },
+    "publicIpAddressName": {
+      "type": "String"
+    },
+    "pipDeleteOption": {
+      "type": "String"
+    }
+  },
+  "variables": {},
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2022-11-01",
+      "name": "[parameters('networkInterfaceName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "subnet": {
+                "id": "[parameters('subnetId')]"
+              },
+              "privateIPAllocationMethod": "Dynamic",
+              "publicIpAddress": {
+                "id": "[resourceId(resourceGroup().name, 'Microsoft.Network/publicIpAddresses', parameters('publicIpAddressName'))]",
+                "properties": {
+                  "deleteOption": "[parameters('pipDeleteOption')]"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {}
+}
