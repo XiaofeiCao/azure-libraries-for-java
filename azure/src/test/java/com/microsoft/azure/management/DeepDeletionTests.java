@@ -4,11 +4,13 @@ import com.microsoft.azure.management.compute.KnownLinuxVirtualMachineImage;
 import com.microsoft.azure.management.compute.VirtualMachine;
 import com.microsoft.azure.management.compute.implementation.ComputeManager;
 import com.microsoft.azure.management.compute.implementation.VirtualMachineInner;
+import com.microsoft.azure.management.network.Network;
 import com.microsoft.azure.management.network.NetworkInterface;
 import com.microsoft.azure.management.network.NetworkSecurityRule;
 import com.microsoft.azure.management.network.SecurityRuleAccess;
 import com.microsoft.azure.management.network.SecurityRuleDirection;
 import com.microsoft.azure.management.network.SecurityRuleProtocol;
+import com.microsoft.azure.management.network.Subnet;
 import com.microsoft.azure.management.network.implementation.SecurityRuleInner;
 import com.microsoft.azure.management.network.implementation.SubnetInner;
 import com.microsoft.azure.management.resources.Deployment;
@@ -282,6 +284,66 @@ public class DeepDeletionTests extends TestBase {
             "    }\n" +
             "}";
 
+    private String updateTemplate = "{\n" +
+            "    \"apiVersion\": \"2020-06-01\",\n" +
+            "    \"type\": \"Microsoft.Resources/deployments\",\n" +
+            "    \"name\": \"updateVNet\",\n" +
+            "    \"properties\": {\n" +
+            "        \"mode\": \"Incremental\",\n" +
+            "        \"parameters\": {},\n" +
+            "        \"template\": {\n" +
+            "            \"$schema\": \"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#\",\n" +
+            "            \"contentVersion\": \"1.0.0.1\",\n" +
+            "            \"parameters\": {\n" +
+            "                \"location\": {\n" +
+            "                    \"type\": \"String\"\n" +
+            "                },\n" +
+            "                \"networkInterfaceName\": {\n" +
+            "                    \"type\": \"String\"\n" +
+            "                },\n" +
+            "                \"subnetId\": {\n" +
+            "                    \"type\": \"String\"\n" +
+            "                },\n" +
+            "                \"publicIpAddressName\": {\n" +
+            "                    \"type\": \"String\"\n" +
+            "                },\n" +
+            "                \"pipDeleteOption\": {\n" +
+            "                    \"type\": \"String\"\n" +
+            "                }\n" +
+            "            },\n" +
+            "            \"variables\": {},\n" +
+            "            \"resources\": [\n" +
+            "                {\n" +
+            "                    \"type\": \"Microsoft.Network/networkInterfaces\",\n" +
+            "                    \"apiVersion\": \"2022-11-01\",\n" +
+            "                    \"name\": \"[parameters('networkInterfaceName')]\",\n" +
+            "                    \"location\": \"[parameters('location')]\",\n" +
+            "                    \"properties\": {\n" +
+            "                        \"ipConfigurations\": [\n" +
+            "                            {\n" +
+            "                                \"name\": \"ipconfig1\",\n" +
+            "                                \"properties\": {\n" +
+            "                                    \"subnet\": {\n" +
+            "                                        \"id\": \"[parameters('subnetId')]\"\n" +
+            "                                    },\n" +
+            "                                    \"privateIPAllocationMethod\": \"Dynamic\",\n" +
+            "                                    \"publicIpAddress\": {\n" +
+            "                                        \"id\": \"[resourceId(resourceGroup().name, 'Microsoft.Network/publicIpAddresses', parameters('publicIpAddressName'))]\",\n" +
+            "                                        \"properties\": {\n" +
+            "                                            \"deleteOption\": \"[parameters('pipDeleteOption')]\"\n" +
+            "                                        }\n" +
+            "                                    }\n" +
+            "                                }\n" +
+            "                            }\n" +
+            "                        ]\n" +
+            "                    }\n" +
+            "                }\n" +
+            "            ],\n" +
+            "            \"outputs\": {}\n" +
+            "        }\n" +
+            "    }\n" +
+            "}";
+
     @Test
     public void testUpdateDeleteOptions() throws IOException {
         String createTemplate = "";
@@ -329,16 +391,18 @@ public class DeepDeletionTests extends TestBase {
         final String pipName1 = generateRandomResourceName("pip", 15);
         SecurityRuleInner rule = new SecurityRuleInner().withName("SSH").withPriority(300).withProtocol(SecurityRuleProtocol.TCP).withAccess(SecurityRuleAccess.ALLOW).withDirection(SecurityRuleDirection.INBOUND).withSourceAddressPrefix("*").withSourcePortRange("*").withDestinationAddressPrefix("*").withDestinationPortRange("22");
         SubnetInner subnetInner = new SubnetInner().withAddressPrefix("10.0.0.0/24").withName("default");
+        String nicName = generateRandomResourceName("nic", 15);
+        String vnetName = generateRandomResourceName("vnet", 15);
 
         setParameter(parameters, "location", region.toString());
-        setParameter(parameters, "networkInterfaceName", generateRandomResourceName("nic", 15));
+        setParameter(parameters, "networkInterfaceName", nicName);
         setParameter(parameters, "nicDeleteOption", "Delete");
         setParameter(parameters, "networkSecurityGroupName", generateRandomResourceName("nsg", 15));
         setParameter(parameters, "networkSecurityGroupRules", Collections.singletonList(rule));
         setParameter(parameters, "addressPrefixes", Collections.singletonList("10.0.0.0/16"));
         setParameter(parameters, "subnetName", "default");
         setParameter(parameters, "subnets", Collections.singletonList(subnetInner));
-        setParameter(parameters, "virtualNetworkName", generateRandomResourceName("vnet", 15));
+        setParameter(parameters, "virtualNetworkName", vnetName);
         setParameter(parameters, "publicIpAddressName", pipName1);
         setParameter(parameters, "publicIpAddressType", "Static");
         setParameter(parameters, "publicIpAddressSku", "Standard");
@@ -358,7 +422,7 @@ public class DeepDeletionTests extends TestBase {
         setParameter(parameters, "vTPM", true);
 
 
-        azure.deployments().define(dp1)
+        Deployment deployment = azure.deployments().define(dp1)
                 .withNewResourceGroup(rgName, region)
                 .withTemplate(deploymentCreateTemplates)
                 .withParameters(parameters)
@@ -366,9 +430,28 @@ public class DeepDeletionTests extends TestBase {
                 .create();
         assert azure.publicIPAddresses().listByResourceGroup(rgName).size() == 1;
 
+        Network network = azure.networks().getByResourceGroup(rgName, vnetName);
+        Subnet subnet = network.subnets().get("default");
+
+        Map<String, Object> updateParameters = new HashMap<>();
+        setParameter(updateParameters, "location", region.toString());
+        setParameter(updateParameters, "networkInterfaceName", nicName);
+        setParameter(updateParameters, "subnetId", subnet.inner().id());
+        setParameter(updateParameters, "publicIpAddressName", pipName1);
+        setParameter(updateParameters, "pipDeleteOption", "Detach");
+
+        String dp2 = generateRandomResourceName("dp", 15);
+        azure.deployments().define(dp2)
+                .withNewResourceGroup(rgName, region)
+                .withTemplate(updateTemplate)
+                .withParameters(updateParameters)
+                .withMode(DeploymentMode.INCREMENTAL)
+                .create();
+
         azure.virtualMachines().deleteByResourceGroup(rgName, vmName1);
 
-        assert azure.publicIPAddresses().listByResourceGroup(rgName).size() == 0;
+        assert azure.publicIPAddresses().listByResourceGroup(rgName).size() == 1;
+
         // Create with deployment templates, update with SDK, verify the deleteOptions is not updated.
 
         // Create with deployment templates, update with deployment templates, verify the deleteOptions is updated.
