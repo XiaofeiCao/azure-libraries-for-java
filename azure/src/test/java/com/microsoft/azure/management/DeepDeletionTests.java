@@ -10,6 +10,7 @@ import com.microsoft.azure.management.network.SecurityRuleProtocol;
 import com.microsoft.azure.management.network.Subnet;
 import com.microsoft.azure.management.network.implementation.SecurityRuleInner;
 import com.microsoft.azure.management.resources.DeploymentMode;
+import com.microsoft.azure.management.resources.GenericResource;
 import com.microsoft.azure.management.resources.ResourceGroup;
 import com.microsoft.azure.management.resources.core.TestBase;
 import com.microsoft.azure.management.resources.core.TestUtilities;
@@ -20,6 +21,7 @@ import org.junit.Test;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class DeepDeletionTests extends TestBase {
@@ -377,6 +379,55 @@ public class DeepDeletionTests extends TestBase {
         azure.virtualMachines().deleteById(vm2.id());
 
         assert azure.publicIPAddresses().listByResourceGroup(resourceGroup.name()).size() == 1;
+    }
+
+    @Test
+    public void testUpdateWithSDK() throws IOException {
+        Region region = Region.US_EAST;
+        ResourceGroup resourceGroup = azure.resourceGroups().define(rgName).withRegion(region).create();
+        // step 1: create VM with ip address delete options "DELETE"
+        // step 2: update VM with Track1 SDK, ip address delete option "Detach"
+        // step 3: delete VM, verify ip address not deleted
+        VirtualMachine vm1 = createVmWithPipDeleteOptionDelete(region, resourceGroup);
+        assert azure.publicIPAddresses().listByResourceGroup(rgName).size() == 1;
+
+        // Mandatory, since default api version is too low and there's no deleteOption configuration
+        String networkApiVersion = "2023-05-01";
+
+        GenericResource nic1Generic = azure.genericResources().getById(vm1.getPrimaryNetworkInterface().id(), networkApiVersion);
+        Map<String, Object> nic1Properties = (Map<String, Object>) nic1Generic.properties();
+        List<Map<String, Object>> ipConfigurations = (List<Map<String, Object>>) nic1Properties.get("ipConfigurations");
+        for (Map<String, Object> ipConfiguration : ipConfigurations) {
+            Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
+            Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
+            Map<String, Object> pipConfigurationProperties = (Map<String, Object>) pipConfiguration.get("properties");
+            if (pipConfigurationProperties == null) {
+                pipConfigurationProperties = new HashMap<>();
+                pipConfiguration.put("properties", pipConfigurationProperties);
+            }
+            pipConfigurationProperties.put("deleteOption", "Detach");
+        }
+
+        nic1Generic.update()
+            .withApiVersion(networkApiVersion)
+            .withProperties(nic1Properties)
+            .apply();
+
+        nic1Generic = azure.genericResources().getById(vm1.getPrimaryNetworkInterface().id(), networkApiVersion);
+
+        nic1Properties = (Map<String, Object>) nic1Generic.properties();
+        ipConfigurations = (List<Map<String, Object>>) nic1Properties.get("ipConfigurations");
+        for (Map<String, Object> ipConfiguration : ipConfigurations) {
+            Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
+            Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
+            Map<String, Object> pipConfigurationProperties = (Map<String, Object>) pipConfiguration.get("properties");
+            String deleteOption = (String) pipConfigurationProperties.get("deleteOption");
+            // verify delete option is updated
+            assert "Detach".equals(deleteOption);
+        }
+
+        azure.virtualMachines().deleteById(vm1.id());
+        assert azure.publicIPAddresses().listByResourceGroup(rgName).size() == 1;
     }
 
     private VirtualMachine createVmWithPipDeleteOptionDelete(Region region, ResourceGroup resourceGroup) throws IOException {
