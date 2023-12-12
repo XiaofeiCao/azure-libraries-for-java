@@ -4,6 +4,7 @@ import com.microsoft.azure.management.compute.VirtualMachine;
 import com.microsoft.azure.management.compute.implementation.VirtualMachineInner;
 import com.microsoft.azure.management.network.Network;
 import com.microsoft.azure.management.network.NetworkInterface;
+import com.microsoft.azure.management.network.PublicIPAddress;
 import com.microsoft.azure.management.network.SecurityRuleAccess;
 import com.microsoft.azure.management.network.SecurityRuleDirection;
 import com.microsoft.azure.management.network.SecurityRuleProtocol;
@@ -15,10 +16,12 @@ import com.microsoft.azure.management.resources.ResourceGroup;
 import com.microsoft.azure.management.resources.core.TestBase;
 import com.microsoft.azure.management.resources.core.TestUtilities;
 import com.microsoft.azure.management.resources.fluentcore.arm.Region;
+import com.microsoft.rest.LogLevel;
 import com.microsoft.rest.RestClient;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -397,21 +400,38 @@ public class DeepDeletionTests extends TestBase {
         GenericResource nic1Generic = azure.genericResources().getById(vm1.getPrimaryNetworkInterface().id(), networkApiVersion);
         Map<String, Object> nic1Properties = (Map<String, Object>) nic1Generic.properties();
         List<Map<String, Object>> ipConfigurations = (List<Map<String, Object>>) nic1Properties.get("ipConfigurations");
+
+        Map<String, Object> nic1PropertiesUpdate = new HashMap<>();
+        List<Map<String, Object>> ipConfigurationsUpdate = new ArrayList<>();
+        nic1PropertiesUpdate.put("ipConfigurations", ipConfigurationsUpdate);
+
         for (Map<String, Object> ipConfiguration : ipConfigurations) {
+
             Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
             Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
-            Map<String, Object> pipConfigurationProperties = (Map<String, Object>) pipConfiguration.get("properties");
-            if (pipConfigurationProperties == null) {
-                pipConfigurationProperties = new HashMap<>();
-                pipConfiguration.put("properties", pipConfigurationProperties);
-            }
-            pipConfigurationProperties.put("deleteOption", "Detach");
+
+            // update parameters
+            Map<String, Object> ipConfigurationUpdate = new HashMap<>();
+            ipConfigurationsUpdate.add(ipConfigurationUpdate);
+            ipConfigurationUpdate.put("name", ipConfiguration.get("name"));
+            ipConfigurationUpdate.put("id", ipConfiguration.get("id"));
+            Map<String, Object> ipConfigurationPropertiesUpdate = new HashMap<>();
+            ipConfigurationUpdate.put("properties", ipConfigurationPropertiesUpdate);
+            Map<String, Object> pipConfigurationUpdate = new HashMap<>();
+            ipConfigurationPropertiesUpdate.put("publicIPAddress", pipConfigurationUpdate);
+            Map<String, Object> pipConfigurationPropertiesUpdate = new HashMap<>();
+            pipConfigurationUpdate.put("properties", pipConfigurationPropertiesUpdate);
+            pipConfigurationUpdate.put("id", pipConfiguration.get("id"));
+            pipConfigurationPropertiesUpdate.put("deleteOption", "Detach");
         }
 
         nic1Generic.update()
             .withApiVersion(networkApiVersion)
-            .withProperties(nic1Properties)
+            .withProperties(nic1PropertiesUpdate)
             .apply();
+
+        PublicIPAddress publicIPAddress = vm1.getPrimaryPublicIPAddress();
+        System.out.println(publicIPAddress.ipAllocationMethod());
 
         nic1Generic = azure.genericResources().getById(vm1.getPrimaryNetworkInterface().id(), networkApiVersion);
 
@@ -421,6 +441,10 @@ public class DeepDeletionTests extends TestBase {
             Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
             Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
             Map<String, Object> pipConfigurationProperties = (Map<String, Object>) pipConfiguration.get("properties");
+
+            // make sure subnet is not overwritten
+            Map<String, Object> subnet = (Map<String, Object>) ipConfigurationProperties.get("subnet");
+            assert subnet != null;
             String deleteOption = (String) pipConfigurationProperties.get("deleteOption");
             // verify delete option is updated
             assert "Detach".equals(deleteOption);
