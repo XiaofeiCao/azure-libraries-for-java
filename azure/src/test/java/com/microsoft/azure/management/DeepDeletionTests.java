@@ -1,6 +1,7 @@
 package com.microsoft.azure.management;
 
 import com.microsoft.azure.management.compute.VirtualMachine;
+import com.microsoft.azure.management.compute.VirtualMachineUpdate;
 import com.microsoft.azure.management.compute.implementation.VirtualMachineInner;
 import com.microsoft.azure.management.network.Network;
 import com.microsoft.azure.management.network.NetworkInterface;
@@ -16,6 +17,7 @@ import com.microsoft.azure.management.resources.ResourceGroup;
 import com.microsoft.azure.management.resources.core.TestBase;
 import com.microsoft.azure.management.resources.core.TestUtilities;
 import com.microsoft.azure.management.resources.fluentcore.arm.Region;
+import com.microsoft.azure.management.resources.implementation.GenericResourceInner;
 import com.microsoft.rest.LogLevel;
 import com.microsoft.rest.RestClient;
 import org.junit.Test;
@@ -396,47 +398,62 @@ public class DeepDeletionTests extends TestBase {
 
         // Mandatory, since default api version is too low and there's no deleteOption configuration
         String networkApiVersion = "2023-05-01";
+        String computeApiVersion = "2023-07-01";
 
-        GenericResource nic1Generic = azure.genericResources().getById(vm1.getPrimaryNetworkInterface().id(), networkApiVersion);
-        Map<String, Object> nic1Properties = (Map<String, Object>) nic1Generic.properties();
-        List<Map<String, Object>> ipConfigurations = (List<Map<String, Object>>) nic1Properties.get("ipConfigurations");
+        GenericResource vmGeneric = azure.genericResources().getById(vm1.id(), computeApiVersion);
+        Map<String, Object> vmProperties = (Map<String, Object>) vmGeneric.properties();
+        Map<String, Object> networkProfile = (Map<String, Object>) vmProperties.get("networkProfile");
+        List<Map<String, Object>> networkInterfaces = (List<Map<String, Object>>) networkProfile.get("networkInterfaces");
+        Map<String, Object> vmPropertiesUpdate = new HashMap<>();
+        Map<String, Object> networkProfileUpdate = new HashMap<>();
+        vmPropertiesUpdate.put("networkProfile", networkProfileUpdate);
+        List<Map<String, Object>> nicConfigurationsUpdate = new ArrayList<>();
+        networkProfileUpdate.put("networkInterfaceConfigurations", nicConfigurationsUpdate);
+        networkProfileUpdate.put("networkApiVersion", networkApiVersion);
+        for (Map<String, Object> nicConfiguration : networkInterfaces) {
+            String nicId = (String) nicConfiguration.get("id");
+            GenericResource nic = azure.genericResources().getById(nicId, networkApiVersion);
 
-        Map<String, Object> nic1PropertiesUpdate = new HashMap<>();
-        List<Map<String, Object>> ipConfigurationsUpdate = new ArrayList<>();
-        nic1PropertiesUpdate.put("ipConfigurations", ipConfigurationsUpdate);
+            Map<String, Object> nicProperties = (Map<String, Object>) nic.properties();
+            List<Map<String, Object>> ipConfigurations = (List<Map<String, Object>>) nicProperties.get("ipConfigurations");
 
-        for (Map<String, Object> ipConfiguration : ipConfigurations) {
+            Map<String, Object> nicConfigurationUpdate = new HashMap<>();
+            nicConfigurationsUpdate.add(nicConfigurationUpdate);
+            Map<String, Object> nicPropertiesUpdate = new HashMap<>();
+            nicConfigurationUpdate.put("properties", nicPropertiesUpdate);
+            nicConfigurationUpdate.put("name", nic.name());
+            List<Map<String, Object>> ipConfigurationsUpdate = new ArrayList<>();
+            nicPropertiesUpdate.put("ipConfigurations", ipConfigurationsUpdate);
+            for (Map<String, Object> ipConfiguration : ipConfigurations) {
+                Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
+                Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
 
-            Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
-            Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
-
-            // update parameters
-            Map<String, Object> ipConfigurationUpdate = new HashMap<>();
-            ipConfigurationsUpdate.add(ipConfigurationUpdate);
-            ipConfigurationUpdate.put("name", ipConfiguration.get("name"));
-            ipConfigurationUpdate.put("id", ipConfiguration.get("id"));
-            Map<String, Object> ipConfigurationPropertiesUpdate = new HashMap<>();
-            ipConfigurationUpdate.put("properties", ipConfigurationPropertiesUpdate);
-            Map<String, Object> pipConfigurationUpdate = new HashMap<>();
-            ipConfigurationPropertiesUpdate.put("publicIPAddress", pipConfigurationUpdate);
-            Map<String, Object> pipConfigurationPropertiesUpdate = new HashMap<>();
-            pipConfigurationUpdate.put("properties", pipConfigurationPropertiesUpdate);
-            pipConfigurationUpdate.put("id", pipConfiguration.get("id"));
-            pipConfigurationPropertiesUpdate.put("deleteOption", "Detach");
+                // update parameters
+                Map<String, Object> ipConfigurationUpdate = new HashMap<>();
+                ipConfigurationsUpdate.add(ipConfigurationUpdate);
+                ipConfigurationUpdate.put("name", ipConfiguration.get("name"));
+//                ipConfigurationUpdate.put("id", ipConfiguration.get("id"));
+                Map<String, Object> ipConfigurationPropertiesUpdate = new HashMap<>();
+                ipConfigurationUpdate.put("properties", ipConfigurationPropertiesUpdate);
+                Map<String, Object> pipConfigurationUpdate = new HashMap<>();
+                ipConfigurationPropertiesUpdate.put("publicIPAddressConfiguration", pipConfigurationUpdate);
+                Map<String, Object> pipConfigurationPropertiesUpdate = new HashMap<>();
+                pipConfigurationUpdate.put("properties", pipConfigurationPropertiesUpdate);
+//                pipConfigurationUpdate.put("id", pipConfiguration.get("id"));
+                pipConfigurationUpdate.put("name", pipConfiguration.get("name"));
+                pipConfigurationPropertiesUpdate.put("deleteOption", "Detach");
+            }
         }
 
-        nic1Generic.update()
-            .withApiVersion(networkApiVersion)
-            .withProperties(nic1PropertiesUpdate)
-            .apply();
+        azure.genericResources().manager().inner().resources().update(rgName, "Microsoft.Compute", "", "virtualMachines", vm1.name(), computeApiVersion, new GenericResourceInner().withProperties(vmPropertiesUpdate));
 
         PublicIPAddress publicIPAddress = vm1.getPrimaryPublicIPAddress();
         System.out.println(publicIPAddress.ipAllocationMethod());
 
-        nic1Generic = azure.genericResources().getById(vm1.getPrimaryNetworkInterface().id(), networkApiVersion);
+        GenericResource nic1Generic = azure.genericResources().getById(vm1.getPrimaryNetworkInterface().id(), networkApiVersion);
 
-        nic1Properties = (Map<String, Object>) nic1Generic.properties();
-        ipConfigurations = (List<Map<String, Object>>) nic1Properties.get("ipConfigurations");
+        Map<String, Object> nic1Properties = (Map<String, Object>) nic1Generic.properties();
+        List<Map<String, Object>> ipConfigurations = (List<Map<String, Object>>) nic1Properties.get("ipConfigurations");
         for (Map<String, Object> ipConfiguration : ipConfigurations) {
             Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
             Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
