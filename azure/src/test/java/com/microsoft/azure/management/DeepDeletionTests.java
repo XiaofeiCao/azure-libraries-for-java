@@ -48,7 +48,7 @@ public class DeepDeletionTests extends TestBase {
     }
 
     private String deploymentCreateTemplates = "{\n" +
-        "    \"$schema\": \"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#\",\n" +
+        "    \"$schema\": \"https://schema.management.azure.com/schemas/2019`-`04-01/deploymentParameters.json#\",\n" +
         "    \"contentVersion\": \"1.0.0.0\",\n" +
         "    \"parameters\": {\n" +
         "        \"location\": {\n" +
@@ -469,6 +469,214 @@ public class DeepDeletionTests extends TestBase {
 
         azure.virtualMachines().deleteById(vm1.id());
         assert azure.publicIPAddresses().listByResourceGroup(rgName).size() == 1;
+    }
+
+    @Test
+    public void testUpdateWithExistingSDK() {
+        String resourceGroupName = "rg-xiaofei";
+        String vmName = "test2023122101";
+        String networkApiVersion = "2023-05-01";
+        String computeApiVersion = "2023-07-01";
+
+        VirtualMachine vm = azure.virtualMachines().getByResourceGroup(resourceGroupName, vmName);
+        GenericResource vmGeneric = azure.genericResources().getById(vm.id(), computeApiVersion);
+        Map<String, Object> vmProperties = (Map<String, Object>) vmGeneric.properties();
+        Map<String, Object> networkProfile = (Map<String, Object>) vmProperties.get("networkProfile");
+        List<Map<String, Object>> networkInterfaces = (List<Map<String, Object>>) networkProfile.get("networkInterfaces");
+        Map<String, Object> vmPropertiesUpdate = new HashMap<>();
+        Map<String, Object> networkProfileUpdate = new HashMap<>();
+        vmPropertiesUpdate.put("networkProfile", networkProfileUpdate);
+        List<Map<String, Object>> nicConfigurationsUpdate = new ArrayList<>();
+        networkProfileUpdate.put("networkInterfaceConfigurations", nicConfigurationsUpdate);
+        networkProfileUpdate.put("networkApiVersion", networkApiVersion);
+        for (Map<String, Object> nicConfiguration : networkInterfaces) {
+            String nicId = (String) nicConfiguration.get("id");
+            GenericResource nic = azure.genericResources().getById(nicId, networkApiVersion);
+
+            Map<String, Object> nicProperties = (Map<String, Object>) nic.properties();
+            List<Map<String, Object>> ipConfigurations = (List<Map<String, Object>>) nicProperties.get("ipConfigurations");
+
+            Map<String, Object> nicConfigurationUpdate = new HashMap<>();
+            nicConfigurationsUpdate.add(nicConfigurationUpdate);
+            Map<String, Object> nicPropertiesUpdate = new HashMap<>();
+            nicConfigurationUpdate.put("properties", nicPropertiesUpdate);
+            nicConfigurationUpdate.put("name", nic.name());
+            List<Map<String, Object>> ipConfigurationsUpdate = new ArrayList<>();
+            nicPropertiesUpdate.put("ipConfigurations", ipConfigurationsUpdate);
+            for (Map<String, Object> ipConfiguration : ipConfigurations) {
+                Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
+                Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
+
+                // update parameters
+                Map<String, Object> ipConfigurationUpdate = new HashMap<>();
+                ipConfigurationsUpdate.add(ipConfigurationUpdate);
+                ipConfigurationUpdate.put("name", ipConfiguration.get("name"));
+//                ipConfigurationUpdate.put("id", ipConfiguration.get("id"));
+                Map<String, Object> ipConfigurationPropertiesUpdate = new HashMap<>();
+                ipConfigurationUpdate.put("properties", ipConfigurationPropertiesUpdate);
+                Map<String, Object> pipConfigurationUpdate = new HashMap<>();
+                ipConfigurationPropertiesUpdate.put("publicIPAddressConfiguration", pipConfigurationUpdate);
+                Map<String, Object> pipConfigurationPropertiesUpdate = new HashMap<>();
+                pipConfigurationUpdate.put("properties", pipConfigurationPropertiesUpdate);
+//                pipConfigurationUpdate.put("id", pipConfiguration.get("id"));
+                pipConfigurationUpdate.put("name", pipConfiguration.get("name"));
+                pipConfigurationPropertiesUpdate.put("deleteOption", "Detach");
+            }
+        }
+
+        azure.genericResources().manager().inner().resources().update(resourceGroupName, "Microsoft.Compute", "", "virtualMachines", vm.name(), computeApiVersion, new GenericResourceInner().withProperties(vmPropertiesUpdate));
+        PublicIPAddress publicIPAddress = vm.getPrimaryPublicIPAddress();
+        System.out.println(publicIPAddress.ipAllocationMethod());
+
+        GenericResource nic1Generic = azure.genericResources().getById(vm.getPrimaryNetworkInterface().id(), networkApiVersion);
+
+        Map<String, Object> nic1Properties = (Map<String, Object>) nic1Generic.properties();
+        List<Map<String, Object>> ipConfigurations = (List<Map<String, Object>>) nic1Properties.get("ipConfigurations");
+        for (Map<String, Object> ipConfiguration : ipConfigurations) {
+            Map<String, Object> ipConfigurationProperties = (Map<String, Object>) ipConfiguration.get("properties");
+            Map<String, Object> pipConfiguration = (Map<String, Object>) ipConfigurationProperties.get("publicIPAddress");
+            Map<String, Object> pipConfigurationProperties = (Map<String, Object>) pipConfiguration.get("properties");
+
+            // make sure subnet is not overwritten
+            Map<String, Object> subnet = (Map<String, Object>) ipConfigurationProperties.get("subnet");
+            assert subnet != null;
+            String deleteOption = (String) pipConfigurationProperties.get("deleteOption");
+            // verify delete option is updated
+            assert "Detach".equals(deleteOption);
+        }
+    }
+
+    private String createAndUpdateTemplate = "{\n" +
+            "\t\"$schema\": \"https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#\",\n" +
+            "\t\"contentVersion\": \"1.0.0.0\",\n" +
+            "\t\"parameters\":{\n" +
+            "        \"pipDeleteOption\": {\n" +
+            "            \"type\": \"string\"\n" +
+            "        }\n" +
+            "\t},\n" +
+            "\t\"variables\": {\n" +
+            "\t\t\"vnetID\": \"[resourceId('Microsoft.Network/virtualNetworks', 'vnet1')]\",\n" +
+            "\t\t\"pipID\": \"[resourceId('Microsoft.Network/publicIPAddresses', 'pip1')]\",\n" +
+            "\t\t\"subnet1id\": \"[concat(variables('vnetID'),'/subnets/subnet1')]\"\n" +
+            "\t},\n" +
+            "\t\"resources\": [\n" +
+            "\t\t{\n" +
+            "\t\t\t\"name\": \"nsg1\",\n" +
+            "\t\t\t\"type\": \"Microsoft.Network/networkSecurityGroups\",\n" +
+            "\t\t\t\"apiVersion\": \"2023-05-01\",\n" +
+            "\t\t\t\"location\": \"[resourceGroup().location]\",\n" +
+            "\t\t\t\"properties\": {\n" +
+            "\t\t\t\t\"securityRules\": [\n" +
+            "\t\t\t\t\t{\n" +
+            "\t\t\t\t\t\t\"name\": \"test-port-allow-pro\",\n" +
+            "\t\t\t\t\t\t\"properties\": {\n" +
+            "\t\t\t\t\t\t\t\"description\": \"\",\n" +
+            "\t\t\t\t\t\t\t\"protocol\": \"Tcp\",\n" +
+            "\t\t\t\t\t\t\t\"sourcePortRange\": \"*\",\n" +
+            "\t\t\t\t\t\t\t\"destinationPortRange\": \"*\",\n" +
+            "\t\t\t\t\t\t\t\"sourceAddressPrefix\": \"*\",\n" +
+            "\t\t\t\t\t\t\t\"destinationAddressPrefix\": \"*\",\n" +
+            "\t\t\t\t\t\t\t\"access\": \"Allow\",\n" +
+            "\t\t\t\t\t\t\t\"priority\": 121,\n" +
+            "\t\t\t\t\t\t\t\"direction\": \"Inbound\"\n" +
+            "\t\t\t\t\t\t}\n" +
+            "\t\t\t\t\t}\n" +
+            "\t\t\t\t]\n" +
+            "\t\t\t}\n" +
+            "\t\t},\n" +
+            "\t\t{\n" +
+            "\t\t\t\"name\": \"vnet1\",\n" +
+            "\t\t\t\"comments\": \"Virtual Network\",\n" +
+            "\t\t\t\"type\": \"Microsoft.Network/virtualNetworks\",\n" +
+            "\t\t\t\"apiVersion\": \"2023-05-01\",\n" +
+            "\t\t\t\"location\": \"[resourceGroup().location]\",\n" +
+            "\t\t\t\"dependsOn\": [\n" +
+            "\t\t\t\t\"[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg1')]\"\n" +
+            "\t\t\t],\n" +
+            "\t\t\t\"properties\": {\n" +
+            "\t\t\t\t\"addressSpace\": {\n" +
+            "\t\t\t\t\t\"addressPrefixes\": [\n" +
+            "\t\t\t\t\t\t\"10.0.0.0/16\"\n" +
+            "\t\t\t\t\t]\n" +
+            "\t\t\t\t},\n" +
+            "\t\t\t\t\"subnets\": [\n" +
+            "\t\t\t\t\t{\n" +
+            "\t\t\t\t\t\t\"name\": \"subnet1\",\n" +
+            "\t\t\t\t\t\t\"properties\": {\n" +
+            "\t\t\t\t\t\t\t\"addressPrefix\": \"10.0.0.0/24\",\n" +
+            "\t\t\t\t\t\t\t\"networkSecurityGroup\": {\n" +
+            "\t\t\t\t\t\t\t\t\"id\": \"[resourceId('Microsoft.Network/networkSecurityGroups', 'nsg1')]\"\n" +
+            "\t\t\t\t\t\t\t}\n" +
+            "\t\t\t\t\t\t}\n" +
+            "\t\t\t\t\t}\n" +
+            "\t\t\t\t]\n" +
+            "\t\t\t}\n" +
+            "\t\t},\n" +
+            "\t\t{\n" +
+            "\t\t\t\"name\": \"pip1\",\n" +
+            "\t\t\t\"type\": \"Microsoft.Network/publicIPAddresses\",\n" +
+            "\t\t\t\"location\": \"[resourceGroup().location]\",\n" +
+            "\t\t\t\"apiVersion\": \"2023-05-01\",\n" +
+            "\t\t\t\"sku\": {\n" +
+            "\t\t\t\t\"name\": \"Standard\"\n" +
+            "\t\t\t},\n" +
+            "\t\t\t\"properties\": {\n" +
+            "\t\t\t\t\"publicIPAllocationMethod\": \"Static\"\n" +
+            "\t\t\t}\n" +
+            "\t\t},\n" +
+            "\t\t{\n" +
+            "\t\t\t\"name\": \"nic1\",\n" +
+            "\t\t\t\"type\": \"Microsoft.Network/networkInterfaces\",\n" +
+            "\t\t\t\"location\": \"[resourceGroup().location]\",\n" +
+            "\t\t\t\"apiVersion\": \"2023-05-01\",\n" +
+            "\t\t\t\"dependsOn\": [\n" +
+            "\t\t\t\t\"[variables('vnetID')]\",\n" +
+            "\t\t\t\t\"[variables('pipID')]\"\n" +
+            "\t\t\t],\n" +
+            "\t\t\t\"properties\": {\n" +
+            "\t\t\t\t\"primary\": true,\n" +
+            "\t\t\t\t\"ipConfigurations\": [\n" +
+            "\t\t\t\t\t{\n" +
+            "\t\t\t\t\t\t\"name\": \"ipConfig2\",\n" +
+            "\t\t\t\t\t\t\"properties\": {\n" +
+            "\t\t\t\t\t\t\t\"primary\": false,\n" +
+            "\t\t\t\t\t\t\t\"subnet\": {\n" +
+            "\t\t\t\t\t\t\t\t\"id\": \"[variables('subnet1id')]\"\n" +
+            "\t\t\t\t\t\t\t},\n" +
+            "\t\t\t\t\t\t\t\"publicIPAddress\": {\n" +
+            "\t\t\t\t\t\t\t\t\"id\": \"[variables('pipID')]\",\n" +
+            "\t\t\t\t\t\t\t\t\"properties\": {\n" +
+            "\t\t\t\t\t\t\t\t\t\"deleteOption\": \"[parameters('pipDeleteOption')]\"\n" +
+            "\t\t\t\t\t\t\t\t}\n" +
+            "\t\t\t\t\t\t\t}\n" +
+            "\t\t\t\t\t\t}\n" +
+            "\t\t\t\t\t}\n" +
+            "\t\t\t\t]\n" +
+            "\t\t\t}\n" +
+            "\t\t}\n" +
+            "\t]\n" +
+            "}";
+
+    @Test
+    public void createAndUpdateNicWithPipDeleteOption() throws IOException {
+        Map<String, Object> parameters = new HashMap<>();
+        // create with "pipDeleteOption" "Delete"
+        setParameter(parameters, "pipDeleteOption", "Delete");
+        azure.deployments().define(generateRandomResourceName("dp", 15))
+                .withNewResourceGroup(rgName, Region.US_EAST)
+                .withTemplate(createAndUpdateTemplate)
+                .withParameters(parameters)
+                .withMode(DeploymentMode.INCREMENTAL)
+                .create();
+
+        setParameter(parameters, "pipDeleteOption", "Detach");
+        // update with "pipDeleteOption" "Detach"
+        azure.deployments().define(generateRandomResourceName("dp", 15))
+                .withExistingResourceGroup(rgName)
+                .withTemplate(createAndUpdateTemplate)
+                .withParameters(parameters)
+                .withMode(DeploymentMode.INCREMENTAL)
+                .create();
     }
 
     private VirtualMachine createVmWithPipDeleteOptionDelete(Region region, ResourceGroup resourceGroup) throws IOException {
